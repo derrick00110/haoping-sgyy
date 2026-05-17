@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState } from 'react';
 import { CheckCircle, XCircle, Clock, AlertTriangle, User, ShieldCheck, Calculator, Image as ImageIcon, Lock, LogOut } from 'lucide-react';
 
 // 初始模拟数据
@@ -25,8 +25,7 @@ export default function App() {
   
   // 图片上传状态
   const [previewImage, setPreviewImage] = useState(null);
-  const cameraInputRef = useRef(null);
-  const albumInputRef = useRef(null);
+
 
   const ADMIN_PASSWORD = 'sgyyzhou'; // 设置店长密码
 
@@ -121,8 +120,9 @@ export default function App() {
     setSuccessMsg('提交成功！等待店长核对美团后台后生效。');
     setOrderNo('');
     setPreviewImage(null); // 清空图片
-    if(cameraInputRef.current) cameraInputRef.current.value = ''; // 重置相机 input
-    if(albumInputRef.current) albumInputRef.current.value = ''; // 重置相册 input
+    // 重置文件输入
+    document.getElementById('camera-input') && (document.getElementById('camera-input').value = '');
+    document.getElementById('album-input') && (document.getElementById('album-input').value = '');
     
     setTimeout(() => setSuccessMsg(''), 3000);
   };
@@ -282,54 +282,36 @@ export default function App() {
 
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">好评截图 <span className="text-red-500 ml-1">*</span></label>
-                    
-                    {/* 拍照输入（调用相机） */}
-                    <input 
-                      type="file" 
-                      accept="image/*" 
-                      capture="environment"
-                      onChange={handleImageChange}
-                      ref={cameraInputRef}
-                      className="hidden"
-                    />
-                    {/* 相册输入（从相册选择） */}
-                    <input 
-                      type="file" 
-                      accept="image/*" 
-                      onChange={handleImageChange}
-                      ref={albumInputRef}
-                      className="hidden"
-                    />
 
                     {/* 自定义上传区域 */}
                     {previewImage ? (
                       <div className="border-2 border-dashed border-gray-300 rounded-lg p-2 text-center bg-gray-50 relative overflow-hidden">
                         <img src={previewImage} alt="Preview" className="w-full h-auto max-h-48 object-contain rounded" />
                         <div className="mt-2 flex space-x-2">
-                          <button type="button" onClick={() => cameraInputRef.current.click()} className="flex-1 text-xs py-2 bg-gray-100 rounded hover:bg-gray-200">📷 重新拍照</button>
-                          <button type="button" onClick={() => albumInputRef.current.click()} className="flex-1 text-xs py-2 bg-gray-100 rounded hover:bg-gray-200">🖼 从相册重选</button>
+                          <label className="flex-1 text-xs py-2 bg-gray-100 rounded hover:bg-gray-200 cursor-pointer text-center">
+                            📷 重新拍照
+                            <input type="file" id="camera-input" accept="image/*" capture="environment" onChange={handleImageChange} style={{ position: 'absolute', width: '1px', height: '1px', overflow: 'hidden', opacity: 0 }} />
+                          </label>
+                          <label className="flex-1 text-xs py-2 bg-gray-100 rounded hover:bg-gray-200 cursor-pointer text-center">
+                            🖼 从相册重选
+                            <input type="file" id="album-input" accept="image/*" onChange={handleImageChange} style={{ position: 'absolute', width: '1px', height: '1px', overflow: 'hidden', opacity: 0 }} />
+                          </label>
                         </div>
                       </div>
                     ) : (
                       <div className="grid grid-cols-2 gap-2">
-                        <button 
-                          type="button"
-                          onClick={() => cameraInputRef.current.click()}
-                          className="border-2 border-dashed border-gray-300 rounded-lg p-4 text-center bg-gray-50 hover:bg-gray-100 cursor-pointer flex flex-col items-center justify-center min-h-[120px]"
-                        >
+                        <label className="border-2 border-dashed border-gray-300 rounded-lg p-4 text-center bg-gray-50 hover:bg-gray-100 cursor-pointer flex flex-col items-center justify-center min-h-[120px]">
+                          <input type="file" id="camera-input" accept="image/*" capture="environment" onChange={handleImageChange} style={{ position: 'absolute', width: '1px', height: '1px', overflow: 'hidden', opacity: 0 }} />
                           <ImageIcon className="mx-auto text-blue-400 mb-2" size={32} />
                           <span className="text-sm text-gray-600 font-medium">📷 拍照</span>
                           <span className="text-xs text-gray-400 mt-1">使用相机</span>
-                        </button>
-                        <button 
-                          type="button"
-                          onClick={() => albumInputRef.current.click()}
-                          className="border-2 border-dashed border-gray-300 rounded-lg p-4 text-center bg-gray-50 hover:bg-gray-100 cursor-pointer flex flex-col items-center justify-center min-h-[120px]"
-                        >
+                        </label>
+                        <label className="border-2 border-dashed border-gray-300 rounded-lg p-4 text-center bg-gray-50 hover:bg-gray-100 cursor-pointer flex flex-col items-center justify-center min-h-[120px]">
+                          <input type="file" id="album-input" accept="image/*" onChange={handleImageChange} style={{ position: 'absolute', width: '1px', height: '1px', overflow: 'hidden', opacity: 0 }} />
                           <ImageIcon className="mx-auto text-green-400 mb-2" size={32} />
                           <span className="text-sm text-gray-600 font-medium">🖼 从相册选择</span>
                           <span className="text-xs text-gray-400 mt-1">选择已有图片</span>
-                        </button>
+                        </label>
                       </div>
                     )}
                   </div>
