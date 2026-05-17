@@ -1,0 +1,458 @@
+import React, { useState, useRef } from 'react';
+import { CheckCircle, XCircle, Clock, AlertTriangle, User, ShieldCheck, Calculator, Image as ImageIcon, Lock, LogOut } from 'lucide-react';
+
+// 初始模拟数据
+const initialReviews = [
+  { id: 1, teacher: '王老师', orderNo: 'MT12345678', date: '2026-05-10', status: 'approved', imageUrl: '' },
+  { id: 2, teacher: '李老师', orderNo: 'MT87654321', date: '2026-05-12', status: 'pending', imageUrl: '' },
+];
+
+export default function App() {
+  const [role, setRole] = useState('teacher'); // 'teacher' or 'admin'
+  const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false); // 店长登录状态
+  const [adminPasswordInput, setAdminPasswordInput] = useState('');
+  const [authError, setAuthError] = useState('');
+
+  const [currentTeacher, setCurrentTeacher] = useState('王老师');
+  const [reviews, setReviews] = useState(initialReviews);
+  const [activeTab, setActiveTab] = useState('submit'); // 'submit', 'list', 'stats'
+
+  // 表单状态
+  const [orderNo, setOrderNo] = useState('');
+  const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
+  const [errorMsg, setErrorMsg] = useState('');
+  const [successMsg, setSuccessMsg] = useState('');
+  
+  // 图片上传状态
+  const [previewImage, setPreviewImage] = useState(null);
+  const cameraInputRef = useRef(null);
+  const albumInputRef = useRef(null);
+
+  const ADMIN_PASSWORD = 'sgyyzhou'; // 设置店长密码
+
+  // --- 店长登录逻辑 ---
+  const handleAdminLogin = (e) => {
+    e.preventDefault();
+    if (adminPasswordInput === ADMIN_PASSWORD) {
+      setIsAdminAuthenticated(true);
+      setRole('admin');
+      setActiveTab('list'); // 登录成功默认跳到审核列表
+      setAuthError('');
+      setAdminPasswordInput('');
+    } else {
+      setAuthError('密码错误，请重新输入');
+    }
+  };
+
+  const handleLogout = () => {
+    setIsAdminAuthenticated(false);
+    setRole('teacher');
+    setActiveTab('submit');
+  };
+
+  const attemptRoleSwitch = (newRole) => {
+    if (newRole === 'admin') {
+      if (!isAdminAuthenticated) {
+        // 如果想切店长但没验证，保持当前视图并要求登录
+        setRole('login'); 
+      } else {
+        setRole('admin');
+        setActiveTab('list');
+      }
+    } else {
+      setRole('teacher');
+      setActiveTab('submit');
+    }
+  };
+
+
+  // --- 图片处理逻辑 ---
+  const handleImageChange = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      // 检查文件类型
+      if (!file.type.startsWith('image/')) {
+        setErrorMsg('请上传图片格式的文件');
+        return;
+      }
+      // 读取文件并在前端预览
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setPreviewImage(reader.result);
+        setErrorMsg(''); // 清除错误提示
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  // --- 提交好评 (含查重逻辑) ---
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    setErrorMsg('');
+    setSuccessMsg('');
+
+    if (!orderNo.trim()) {
+      setErrorMsg('必须填写美团订单号或券码！');
+      return;
+    }
+    
+    if (!previewImage) {
+      setErrorMsg('请上传带有日期的好评截图！');
+      return;
+    }
+
+    // 【核心防作弊】：查重逻辑
+    const isDuplicate = reviews.some(r => r.orderNo === orderNo.trim());
+    if (isDuplicate) {
+      setErrorMsg(`查重失败：订单号 ${orderNo} 已经被使用过！请勿重复提交或拿旧图忽悠。`);
+      return;
+    }
+
+    const newReview = {
+      id: Date.now(),
+      teacher: currentTeacher,
+      orderNo: orderNo.trim(),
+      date: date,
+      status: 'pending', // 提交后默认为待审核
+      imageUrl: previewImage 
+    };
+
+    setReviews([newReview, ...reviews]);
+    setSuccessMsg('提交成功！等待店长核对美团后台后生效。');
+    setOrderNo('');
+    setPreviewImage(null); // 清空图片
+    if(cameraInputRef.current) cameraInputRef.current.value = ''; // 重置相机 input
+    if(albumInputRef.current) albumInputRef.current.value = ''; // 重置相册 input
+    
+    setTimeout(() => setSuccessMsg(''), 3000);
+  };
+
+  // --- 店长审核逻辑 ---
+  const handleReviewAction = (id, action) => {
+    setReviews(reviews.map(r => 
+      r.id === id ? { ...r, status: action } : r
+    ));
+  };
+
+  // --- 奖惩计算核心逻辑 ---
+  const calculateStats = (teacherName) => {
+    const validCount = reviews.filter(r => r.teacher === teacherName && r.status === 'approved').length;
+    
+    // 周任务
+    let weeklyPenalty = 0;
+    let weeklyBonus = 0;
+    if (validCount < 10) {
+      weeklyPenalty = (10 - validCount) * 5;
+    } else if (validCount > 20) {
+      weeklyBonus = (validCount - 20) * 5;
+    }
+
+    // 月任务
+    let monthlyPenalty = 0;
+    let monthlyBonus = 0;
+    if (validCount < 60) {
+      monthlyPenalty = (60 - validCount) * 5;
+    } else if (validCount > 90) {
+      monthlyBonus = (validCount - 90) * 5;
+    }
+
+    return { validCount, weeklyPenalty, weeklyBonus, monthlyPenalty, monthlyBonus };
+  };
+
+  const teachers = ['王老师', '李老师', '张老师'];
+
+  return (
+    <div className="min-h-screen bg-gray-100 text-gray-800 font-sans pb-10">
+      {/* 顶部导航与角色切换 */}
+      <header className="bg-blue-600 text-white p-4 shadow-md flex justify-between items-center sticky top-0 z-10">
+        <h1 className="text-xl font-bold flex items-center truncate">
+          <ShieldCheck className="mr-2 flex-shrink-0"/> 
+          好评管理系统
+        </h1>
+        <div className="flex space-x-2">
+          {isAdminAuthenticated && role === 'admin' ? (
+            <button 
+              onClick={handleLogout} 
+              className="flex items-center px-3 py-1 rounded-full text-sm bg-red-500 hover:bg-red-600 text-white"
+            >
+              <LogOut size={14} className="mr-1"/> 退出店长
+            </button>
+          ) : (
+            <>
+              <button 
+                onClick={() => attemptRoleSwitch('teacher')} 
+                className={`px-3 py-1 rounded-full text-sm ${role === 'teacher' ? 'bg-white text-blue-600 font-bold' : 'bg-blue-500'}`}
+              >
+                老师端
+              </button>
+              <button 
+                onClick={() => attemptRoleSwitch('admin')} 
+                className={`px-3 py-1 rounded-full text-sm ${role === 'admin' || role === 'login' ? 'bg-white text-blue-600 font-bold' : 'bg-blue-500'}`}
+              >
+                店长端
+              </button>
+            </>
+          )}
+        </div>
+      </header>
+
+      <main className="max-w-md mx-auto mt-4 p-4">
+        
+        {/* --- 登录界面 --- */}
+        {role === 'login' && (
+          <div className="bg-white p-6 rounded-lg shadow-md mt-10 border-t-4 border-blue-600">
+            <div className="text-center mb-6">
+              <div className="bg-blue-100 p-3 rounded-full inline-block mb-2">
+                <Lock className="text-blue-600" size={32} />
+              </div>
+              <h2 className="text-xl font-bold text-gray-800">店长身份验证</h2>
+              <p className="text-sm text-gray-500 mt-1">请输入授权密码以访问管理后台</p>
+            </div>
+            
+            <form onSubmit={handleAdminLogin}>
+              <div className="mb-4">
+                <input 
+                  type="password" 
+                  value={adminPasswordInput}
+                  onChange={(e) => setAdminPasswordInput(e.target.value)}
+                  placeholder="请输入店长密码" 
+                  className="w-full p-3 border rounded-lg bg-gray-50 focus:ring-2 focus:ring-blue-500"
+                  required
+                />
+              </div>
+              {authError && <div className="text-red-500 text-sm mb-4 text-center">{authError}</div>}
+              <button type="submit" className="w-full bg-blue-600 text-white font-bold py-3 rounded-lg hover:bg-blue-700 transition">
+                验证并进入
+              </button>
+            </form>
+          </div>
+        )}
+
+        {/* --- 系统主界面 (登录后或老师端) --- */}
+        {role !== 'login' && (
+          <>
+            {/* 导航标签 */}
+            <div className="flex bg-white rounded-lg shadow mb-6 overflow-hidden">
+              {role === 'teacher' && (
+                <button onClick={() => setActiveTab('submit')} className={`flex-1 py-3 text-center font-medium ${activeTab === 'submit' ? 'bg-blue-50 text-blue-600 border-b-2 border-blue-600' : 'text-gray-500'}`}>
+                  上传好评
+                </button>
+              )}
+              <button onClick={() => setActiveTab('list')} className={`flex-1 py-3 text-center font-medium ${activeTab === 'list' ? 'bg-blue-50 text-blue-600 border-b-2 border-blue-600' : 'text-gray-500'}`}>
+                {role === 'admin' ? '审核列表' : '我的记录'}
+              </button>
+              <button onClick={() => setActiveTab('stats')} className={`flex-1 py-3 text-center font-medium ${activeTab === 'stats' ? 'bg-blue-50 text-blue-600 border-b-2 border-blue-600' : 'text-gray-500'}`}>
+                奖惩统计
+              </button>
+            </div>
+
+            {/* 标签页 1: 提交表单 (老师端) */}
+            {activeTab === 'submit' && role === 'teacher' && (
+              <div className="bg-white p-6 rounded-lg shadow-md">
+                <div className="mb-4 flex items-center justify-between border-b pb-4">
+                  <span className="text-gray-600">当前老师:</span>
+                  <select 
+                    value={currentTeacher} 
+                    onChange={(e) => setCurrentTeacher(e.target.value)}
+                    className="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg p-2 focus:ring-blue-500 focus:border-blue-500"
+                  >
+                    {teachers.map(t => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                </div>
+
+                <form onSubmit={handleSubmit} className="space-y-5">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">好评日期</label>
+                    <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="w-full p-3 border rounded-lg bg-gray-50" required />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">
+                      美团订单号/券码 <span className="text-red-500 ml-1">*</span>
+                    </label>
+                    <input 
+                      type="text" 
+                      value={orderNo} 
+                      onChange={(e) => setOrderNo(e.target.value)} 
+                      placeholder="输入唯一订单号用于系统查重" 
+                      className="w-full p-3 border rounded-lg bg-gray-50 focus:ring-2 focus:ring-blue-500"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">提交前请核对，相同订单号无法重复提交。</p>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">好评截图 <span className="text-red-500 ml-1">*</span></label>
+                    
+                    {/* 拍照输入（调用相机） */}
+                    <input 
+                      type="file" 
+                      accept="image/*" 
+                      capture="environment"
+                      onChange={handleImageChange}
+                      ref={cameraInputRef}
+                      className="hidden"
+                    />
+                    {/* 相册输入（从相册选择） */}
+                    <input 
+                      type="file" 
+                      accept="image/*" 
+                      onChange={handleImageChange}
+                      ref={albumInputRef}
+                      className="hidden"
+                    />
+
+                    {/* 自定义上传区域 */}
+                    {previewImage ? (
+                      <div className="border-2 border-dashed border-gray-300 rounded-lg p-2 text-center bg-gray-50 relative overflow-hidden">
+                        <img src={previewImage} alt="Preview" className="w-full h-auto max-h-48 object-contain rounded" />
+                        <div className="mt-2 flex space-x-2">
+                          <button type="button" onClick={() => cameraInputRef.current.click()} className="flex-1 text-xs py-2 bg-gray-100 rounded hover:bg-gray-200">📷 重新拍照</button>
+                          <button type="button" onClick={() => albumInputRef.current.click()} className="flex-1 text-xs py-2 bg-gray-100 rounded hover:bg-gray-200">🖼 从相册重选</button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-2 gap-2">
+                        <button 
+                          type="button"
+                          onClick={() => cameraInputRef.current.click()}
+                          className="border-2 border-dashed border-gray-300 rounded-lg p-4 text-center bg-gray-50 hover:bg-gray-100 cursor-pointer flex flex-col items-center justify-center min-h-[120px]"
+                        >
+                          <ImageIcon className="mx-auto text-blue-400 mb-2" size={32} />
+                          <span className="text-sm text-gray-600 font-medium">📷 拍照</span>
+                          <span className="text-xs text-gray-400 mt-1">使用相机</span>
+                        </button>
+                        <button 
+                          type="button"
+                          onClick={() => albumInputRef.current.click()}
+                          className="border-2 border-dashed border-gray-300 rounded-lg p-4 text-center bg-gray-50 hover:bg-gray-100 cursor-pointer flex flex-col items-center justify-center min-h-[120px]"
+                        >
+                          <ImageIcon className="mx-auto text-green-400 mb-2" size={32} />
+                          <span className="text-sm text-gray-600 font-medium">🖼 从相册选择</span>
+                          <span className="text-xs text-gray-400 mt-1">选择已有图片</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  {errorMsg && <div className="p-3 bg-red-50 text-red-700 border border-red-200 rounded-lg text-sm flex items-start"><AlertTriangle className="mr-2 flex-shrink-0 mt-0.5" size={16} /> {errorMsg}</div>}
+                  {successMsg && <div className="p-3 bg-green-50 text-green-700 border border-green-200 rounded-lg text-sm flex items-start"><CheckCircle className="mr-2 flex-shrink-0 mt-0.5" size={16} /> {successMsg}</div>}
+
+                  <button type="submit" className="w-full bg-blue-600 text-white font-bold py-3 rounded-lg hover:bg-blue-700 transition shadow-lg mt-4">
+                    提交好评审核
+                  </button>
+                </form>
+              </div>
+            )}
+
+            {/* 标签页 2: 记录/审核列表 */}
+            {activeTab === 'list' && (
+              <div className="space-y-4">
+                {reviews.filter(r => role === 'admin' ? true : r.teacher === currentTeacher).map(review => (
+                  <div key={review.id} className="bg-white p-4 rounded-lg shadow-sm border border-gray-100 flex flex-col">
+                    <div className="flex justify-between items-start mb-3">
+                      <div>
+                        <span className="font-bold text-lg mr-2">{review.teacher}</span>
+                        <span className="text-sm text-gray-500 bg-gray-100 px-2 py-0.5 rounded">{review.date}</span>
+                      </div>
+                      {review.status === 'pending' && <span className="px-2 py-1 bg-yellow-100 text-yellow-700 text-xs rounded-full flex items-center font-medium"><Clock size={12} className="mr-1"/> 待查验</span>}
+                      {review.status === 'approved' && <span className="px-2 py-1 bg-green-100 text-green-700 text-xs rounded-full flex items-center font-medium"><CheckCircle size={12} className="mr-1"/> 已通过</span>}
+                      {review.status === 'rejected' && <span className="px-2 py-1 bg-red-100 text-red-700 text-xs rounded-full flex items-center font-medium"><XCircle size={12} className="mr-1"/> 驳回</span>}
+                    </div>
+                    
+                    <div className="flex gap-3 mb-2">
+                       {/* 显示上传的图片 */}
+                       {review.imageUrl && (
+                         <div className="w-20 h-20 flex-shrink-0 bg-gray-100 rounded overflow-hidden border">
+                           {review.imageUrl.startsWith('data:image') ? (
+                             <img src={review.imageUrl} alt="好评截图" className="w-full h-full object-cover" />
+                           ) : (
+                             <div className="w-full h-full flex items-center justify-center text-xs text-gray-400">无图</div>
+                           )}
+                         </div>
+                       )}
+                       <div className="flex-1 text-sm text-gray-700 bg-blue-50 p-2 rounded border border-blue-100">
+                        <p className="mb-1 text-xs text-gray-500">订单号/券码:</p>
+                        <p className="font-mono font-bold text-base text-gray-800 break-all">{review.orderNo}</p>
+                      </div>
+                    </div>
+                    
+                    {role === 'admin' && review.status === 'pending' && (
+                      <div className="flex space-x-3 border-t border-gray-100 pt-3 mt-2">
+                        <button onClick={() => handleReviewAction(review.id, 'approved')} className="flex-1 bg-white border border-green-500 text-green-600 py-2 rounded-lg text-sm font-bold hover:bg-green-50 transition">
+                          ✅ 比对一致 (通过)
+                        </button>
+                        <button onClick={() => handleReviewAction(review.id, 'rejected')} className="flex-1 bg-white border border-red-500 text-red-600 py-2 rounded-lg text-sm font-bold hover:bg-red-50 transition">
+                          ❌ 乱填/无图 (驳回)
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+                {reviews.length === 0 && (
+                  <div className="text-center bg-white p-10 rounded-lg shadow-sm border border-gray-100 text-gray-500">
+                    <ImageIcon className="mx-auto text-gray-300 mb-2" size={48} />
+                    <p>暂无好评记录</p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* 标签页 3: 奖惩统计 */}
+            {activeTab === 'stats' && (
+              <div className="space-y-4">
+                 <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 p-4 rounded-lg text-sm text-blue-900 shadow-sm">
+                    <div className="flex items-center font-bold mb-2">
+                      <Calculator className="mr-2 text-blue-600" size={18} />
+                      奖惩规则说明
+                    </div>
+                    <ul className="list-disc pl-5 space-y-1 text-xs text-gray-700">
+                      <li><span className="font-semibold">周结：</span>低于10条(罚5元/条)，高于20条(奖5元/条)</li>
+                      <li><span className="font-semibold">月结：</span>低于60条(罚5元/条)，高于90条(奖5元/条)</li>
+                      <li className="text-red-500">注：仅计算店长核对"已通过"的数量。</li>
+                    </ul>
+                 </div>
+
+                {(role === 'admin' ? teachers : [currentTeacher]).map(teacher => {
+                  const stats = calculateStats(teacher);
+                  return (
+                    <div key={teacher} className="bg-white p-5 rounded-xl shadow-sm border border-gray-100 border-l-4 border-l-blue-500 relative overflow-hidden">
+                      <h3 className="font-bold text-lg border-b border-gray-100 pb-2 mb-4 flex items-center text-gray-800">
+                        <User className="mr-2 text-blue-500 bg-blue-50 p-1 rounded-full" size={24}/> 
+                        {teacher}
+                      </h3>
+                      
+                      <div className="bg-gray-50 p-4 rounded-lg mb-4 text-center">
+                        <p className="text-sm text-gray-500 font-medium mb-1">当前有效好评总数</p>
+                        <p className="text-4xl font-black text-gray-800 tracking-tight">
+                          {stats.validCount} <span className="text-base font-normal text-gray-500">条</span>
+                        </p>
+                      </div>
+                      
+                      <div className="space-y-3 text-sm">
+                        {/* 周结展示 */}
+                        <div className="flex justify-between items-center p-3 rounded-lg border border-gray-100">
+                          <span className="font-semibold text-gray-700">周考核 (10-20条)</span>
+                          {stats.weeklyPenalty > 0 && <span className="text-red-600 font-bold bg-red-50 px-2 py-1 rounded">罚 ¥{stats.weeklyPenalty} (差 {10 - stats.validCount}条)</span>}
+                          {stats.weeklyBonus > 0 && <span className="text-green-600 font-bold bg-green-50 px-2 py-1 rounded">奖 ¥{stats.weeklyBonus} (超 {stats.validCount - 20}条)</span>}
+                          {stats.weeklyPenalty === 0 && stats.weeklyBonus === 0 && <span className="text-gray-500 bg-gray-100 px-2 py-1 rounded">达标区</span>}
+                        </div>
+
+                        {/* 月结展示 */}
+                        <div className="flex justify-between items-center p-3 rounded-lg border border-gray-100">
+                          <span className="font-semibold text-gray-700">月考核 (60-90条)</span>
+                          {stats.monthlyPenalty > 0 && <span className="text-red-600 font-bold bg-red-50 px-2 py-1 rounded">罚 ¥{stats.monthlyPenalty} (差 {60 - stats.validCount}条)</span>}
+                          {stats.monthlyBonus > 0 && <span className="text-green-600 font-bold bg-green-50 px-2 py-1 rounded">奖 ¥{stats.monthlyBonus} (超 {stats.validCount - 90}条)</span>}
+                          {stats.monthlyPenalty === 0 && stats.monthlyBonus === 0 && <span className="text-gray-500 bg-gray-100 px-2 py-1 rounded">达标区</span>}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </>
+        )}
+      </main>
+    </div>
+  );
+}
