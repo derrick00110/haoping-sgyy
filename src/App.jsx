@@ -1,11 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { CheckCircle, XCircle, Clock, AlertTriangle, User, ShieldCheck, Calculator, Image as ImageIcon, Lock, LogOut } from 'lucide-react';
-import { db, storage } from './firebase';
+import { db } from './firebase';
 import { 
   collection, query, orderBy, onSnapshot, 
   addDoc, updateDoc, deleteDoc, doc, serverTimestamp 
 } from 'firebase/firestore';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 
 export default function App() {
   const [role, setRole] = useState('teacher');
@@ -31,7 +30,6 @@ export default function App() {
   
   // 图片上传状态
   const [previewImage, setPreviewImage] = useState(null);
-  const [selectedFile, setSelectedFile] = useState(null);
   
   // 老师管理状态
   const [showTeacherMgmt, setShowTeacherMgmt] = useState(false);
@@ -105,7 +103,33 @@ export default function App() {
     }
   };
 
-  // --- 图片处理 ---
+  // --- 图片处理（客户端压缩 + 预览） ---
+  const compressImage = (dataUrl) => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        let { width, height } = img;
+        const MAX_SIZE = 1200;
+        if (width > MAX_SIZE || height > MAX_SIZE) {
+          if (width > height) {
+            height = Math.round((height / width) * MAX_SIZE);
+            width = MAX_SIZE;
+          } else {
+            width = Math.round((width / height) * MAX_SIZE);
+            height = MAX_SIZE;
+          }
+        }
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/jpeg', 0.7));
+      };
+      img.src = dataUrl;
+    });
+  };
+
   const handleImageChange = (e) => {
     const file = e.target.files[0];
     if (file) {
@@ -113,7 +137,6 @@ export default function App() {
         setErrorMsg('请上传图片格式的文件');
         return;
       }
-      setSelectedFile(file);
       const reader = new FileReader();
       reader.onloadend = () => {
         setPreviewImage(reader.result);
@@ -134,7 +157,7 @@ export default function App() {
       return;
     }
     
-    if (!previewImage || !selectedFile) {
+    if (!previewImage) {
       setErrorMsg('请上传带有日期的好评截图！');
       return;
     }
@@ -148,19 +171,16 @@ export default function App() {
 
     setSubmitting(true);
     try {
-      // 1. 上传图片到 Firebase Storage
-      const fileName = `reviews/${Date.now()}_${selectedFile.name}`;
-      const storageRef = ref(storage, fileName);
-      await uploadBytes(storageRef, selectedFile);
-      const imageUrl = await getDownloadURL(storageRef);
+      // 1. 在客户端压缩图片
+      const compressedImage = await compressImage(previewImage);
 
-      // 2. 保存到 Firestore
+      // 2. 保存到 Firestore（图片以 base64 字符串形式存储）
       await addDoc(collection(db, 'reviews'), {
         teacher: currentTeacher,
         orderNo: orderNo.trim(),
         date: date,
         status: 'pending',
-        imageUrl: imageUrl,
+        imageUrl: compressedImage,
         createdAt: serverTimestamp(),
       });
 
@@ -168,7 +188,6 @@ export default function App() {
       setOrderNo('');
       setDate(new Date().toISOString().split('T')[0]);
       setPreviewImage(null);
-      setSelectedFile(null);
       // 重置文件输入
       document.getElementById('camera-input') && (document.getElementById('camera-input').value = '');
       document.getElementById('album-input') && (document.getElementById('album-input').value = '');
