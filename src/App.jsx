@@ -1,60 +1,75 @@
 import React, { useState, useEffect } from 'react';
 import { CheckCircle, XCircle, Clock, AlertTriangle, User, ShieldCheck, Calculator, Image as ImageIcon, Lock, LogOut } from 'lucide-react';
-
-// 初始模拟数据（仅首次使用，之后从 localStorage 读取）
-const initialReviews = [
-  { id: 1, teacher: '王老师', orderNo: 'MT12345678', date: '2026-05-10', status: 'approved', imageUrl: '' },
-  { id: 2, teacher: '李老师', orderNo: 'MT87654321', date: '2026-05-12', status: 'pending', imageUrl: '' },
-];
-const defaultTeachers = ['王老师', '李老师', '张老师'];
-
-// 从 localStorage 读取数据，没有则用默认值
-const loadFromStorage = (key, fallback) => {
-  try {
-    const saved = localStorage.getItem(key);
-    return saved ? JSON.parse(saved) : fallback;
-  } catch {
-    return fallback;
-  }
-};
+import { db, storage } from './firebase';
+import { 
+  collection, query, orderBy, onSnapshot, 
+  addDoc, updateDoc, deleteDoc, doc, serverTimestamp 
+} from 'firebase/firestore';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 
 export default function App() {
-  const [role, setRole] = useState('teacher'); // 'teacher' or 'admin'
-  const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false); // 店长登录状态
+  const [role, setRole] = useState('teacher');
+  const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
   const [adminPasswordInput, setAdminPasswordInput] = useState('');
   const [authError, setAuthError] = useState('');
 
-  const [teachers, setTeachers] = useState(() => loadFromStorage('haoping_teachers', defaultTeachers));
-  const [currentTeacher, setCurrentTeacher] = useState(() => {
-    const saved = loadFromStorage('haoping_teachers', defaultTeachers);
-    return saved[0] || '王老师';
-  });
-  const [reviews, setReviews] = useState(() => loadFromStorage('haoping_reviews', initialReviews));
-  const [activeTab, setActiveTab] = useState('submit'); // 'submit', 'list', 'stats'
+  // Firebase 数据（初始为空，onSnapshot 加载）
+  const [teacherList, setTeacherList] = useState([]); // [{ id, name }, ...]
+  const [reviews, setReviews] = useState([]);
+  const [dataReady, setDataReady] = useState(false);
+  const teachers = teacherList.map(t => t.name);
+
+  const [currentTeacher, setCurrentTeacher] = useState('');
+  const [activeTab, setActiveTab] = useState('submit');
 
   // 表单状态
   const [orderNo, setOrderNo] = useState('');
   const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
+  const [submitting, setSubmitting] = useState(false);
   
   // 图片上传状态
   const [previewImage, setPreviewImage] = useState(null);
+  const [selectedFile, setSelectedFile] = useState(null);
   
   // 老师管理状态
   const [showTeacherMgmt, setShowTeacherMgmt] = useState(false);
   const [newTeacherName, setNewTeacherName] = useState('');
 
+  const ADMIN_PASSWORD = 'sgyyzhou';
 
-  // --- 数据持久化：state 变更时自动同步到 localStorage ---
+  // --- Firebase 实时监听 ---
   useEffect(() => {
-    localStorage.setItem('haoping_reviews', JSON.stringify(reviews));
-  }, [reviews]);
-  useEffect(() => {
-    localStorage.setItem('haoping_teachers', JSON.stringify(teachers));
-  }, [teachers]);
+    // 监听 teachers 集合
+    const unsubTeachers = onSnapshot(collection(db, 'teachers'), (snapshot) => {
+      const list = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+      setTeacherList(list);
+    });
 
-  const ADMIN_PASSWORD = 'sgyyzhou'; // 设置店长密码
+    // 监听 reviews 集合（按创建时间倒序）
+    const q = query(collection(db, 'reviews'), orderBy('createdAt', 'desc'));
+    const unsubReviews = onSnapshot(q, (snapshot) => {
+      const list = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+      setReviews(list);
+    });
+
+    // 等待初始数据加载完成
+    const timer = setTimeout(() => setDataReady(true), 1000);
+
+    return () => {
+      unsubTeachers();
+      unsubReviews();
+      clearTimeout(timer);
+    };
+  }, []);
+
+  // teachers 加载完成后，设置默认 currentTeacher
+  useEffect(() => {
+    if (teachers.length > 0 && !currentTeacher) {
+      setCurrentTeacher(teachers[0]);
+    }
+  }, [teachers.length]);
 
   // --- 店长登录逻辑 ---
   const handleAdminLogin = (e) => {
@@ -62,7 +77,7 @@ export default function App() {
     if (adminPasswordInput === ADMIN_PASSWORD) {
       setIsAdminAuthenticated(true);
       setRole('admin');
-      setActiveTab('list'); // 登录成功默认跳到审核列表
+      setActiveTab('list');
       setAuthError('');
       setAdminPasswordInput('');
     } else {
@@ -79,7 +94,6 @@ export default function App() {
   const attemptRoleSwitch = (newRole) => {
     if (newRole === 'admin') {
       if (!isAdminAuthenticated) {
-        // 如果想切店长但没验证，保持当前视图并要求登录
         setRole('login'); 
       } else {
         setRole('admin');
@@ -91,28 +105,26 @@ export default function App() {
     }
   };
 
-
-  // --- 图片处理逻辑 ---
+  // --- 图片处理 ---
   const handleImageChange = (e) => {
     const file = e.target.files[0];
     if (file) {
-      // 检查文件类型
       if (!file.type.startsWith('image/')) {
         setErrorMsg('请上传图片格式的文件');
         return;
       }
-      // 读取文件并在前端预览
+      setSelectedFile(file);
       const reader = new FileReader();
       reader.onloadend = () => {
         setPreviewImage(reader.result);
-        setErrorMsg(''); // 清除错误提示
+        setErrorMsg('');
       };
       reader.readAsDataURL(file);
     }
   };
 
-  // --- 提交好评 (含查重逻辑) ---
-  const handleSubmit = (e) => {
+  // --- 提交好评（Firebase 版本） ---
+  const handleSubmit = async (e) => {
     e.preventDefault();
     setErrorMsg('');
     setSuccessMsg('');
@@ -122,71 +134,98 @@ export default function App() {
       return;
     }
     
-    if (!previewImage) {
+    if (!previewImage || !selectedFile) {
       setErrorMsg('请上传带有日期的好评截图！');
       return;
     }
 
-    // 【核心防作弊】：查重逻辑
+    // 查重
     const isDuplicate = reviews.some(r => r.orderNo === orderNo.trim());
     if (isDuplicate) {
       setErrorMsg(`查重失败：订单号 ${orderNo} 已经被使用过！请勿重复提交或拿旧图忽悠。`);
       return;
     }
 
-    const newReview = {
-      id: Date.now(),
-      teacher: currentTeacher,
-      orderNo: orderNo.trim(),
-      date: date,
-      status: 'pending', // 提交后默认为待审核
-      imageUrl: previewImage 
-    };
+    setSubmitting(true);
+    try {
+      // 1. 上传图片到 Firebase Storage
+      const fileName = `reviews/${Date.now()}_${selectedFile.name}`;
+      const storageRef = ref(storage, fileName);
+      await uploadBytes(storageRef, selectedFile);
+      const imageUrl = await getDownloadURL(storageRef);
 
-    setReviews([newReview, ...reviews]);
-    setSuccessMsg('提交成功！等待店长核对美团后台后生效。');
-    setOrderNo('');
-    setPreviewImage(null); // 清空图片
-    // 重置文件输入
-    document.getElementById('camera-input') && (document.getElementById('camera-input').value = '');
-    document.getElementById('album-input') && (document.getElementById('album-input').value = '');
-    
+      // 2. 保存到 Firestore
+      await addDoc(collection(db, 'reviews'), {
+        teacher: currentTeacher,
+        orderNo: orderNo.trim(),
+        date: date,
+        status: 'pending',
+        imageUrl: imageUrl,
+        createdAt: serverTimestamp(),
+      });
+
+      setSuccessMsg('提交成功！等待店长核对美团后台后生效。');
+      setOrderNo('');
+      setDate(new Date().toISOString().split('T')[0]);
+      setPreviewImage(null);
+      setSelectedFile(null);
+      // 重置文件输入
+      document.getElementById('camera-input') && (document.getElementById('camera-input').value = '');
+      document.getElementById('album-input') && (document.getElementById('album-input').value = '');
+    } catch (err) {
+      setErrorMsg('提交失败：' + err.message);
+    }
+    setSubmitting(false);
     setTimeout(() => setSuccessMsg(''), 3000);
   };
 
-  // --- 店长审核逻辑 ---
-  const handleReviewAction = (id, action) => {
-    setReviews(reviews.map(r => 
-      r.id === id ? { ...r, status: action } : r
-    ));
+  // --- 店长审核 ---
+  const handleReviewAction = async (id, action) => {
+    try {
+      await updateDoc(doc(db, 'reviews', id), { status: action });
+    } catch (err) {
+      alert('操作失败：' + err.message);
+    }
   };
 
-  // --- 老师管理逻辑 ---
-  const handleAddTeacher = () => {
+  // --- 老师管理 ---
+  const handleAddTeacher = async () => {
     const name = newTeacherName.trim();
     if (!name) return;
     if (teachers.includes(name)) {
       alert('该老师已存在！');
       return;
     }
-    setTeachers([...teachers, name]);
-    setNewTeacherName('');
-  };
-
-  const handleRemoveTeacher = (name) => {
-    if (!window.confirm(`确定要删除「${name}」吗？（该老师的好评记录不会删除）`)) return;
-    const newTeachers = teachers.filter(t => t !== name);
-    setTeachers(newTeachers);
-    if (currentTeacher === name) {
-      setCurrentTeacher(newTeachers[0] || '');
+    try {
+      await addDoc(collection(db, 'teachers'), { 
+        name, 
+        createdAt: serverTimestamp() 
+      });
+      setNewTeacherName('');
+    } catch (err) {
+      alert('添加失败：' + err.message);
     }
   };
 
-  // --- 奖惩计算核心逻辑 ---
+  const handleRemoveTeacher = async (name) => {
+    if (!window.confirm(`确定要删除「${name}」吗？（该老师的好评记录不会删除）`)) return;
+    try {
+      const target = teacherList.find(t => t.name === name);
+      if (target) {
+        await deleteDoc(doc(db, 'teachers', target.id));
+      }
+      if (currentTeacher === name) {
+        setCurrentTeacher(teachers.filter(t => t !== name)[0] || '');
+      }
+    } catch (err) {
+      alert('删除失败：' + err.message);
+    }
+  };
+
+  // --- 奖惩计算 ---
   const calculateStats = (teacherName) => {
     const validCount = reviews.filter(r => r.teacher === teacherName && r.status === 'approved').length;
     
-    // 周任务
     let weeklyPenalty = 0;
     let weeklyBonus = 0;
     if (validCount < 10) {
@@ -195,7 +234,6 @@ export default function App() {
       weeklyBonus = (validCount - 20) * 5;
     }
 
-    // 月任务
     let monthlyPenalty = 0;
     let monthlyBonus = 0;
     if (validCount < 60) {
@@ -207,9 +245,21 @@ export default function App() {
     return { validCount, weeklyPenalty, weeklyBonus, monthlyPenalty, monthlyBonus };
   };
 
+  // --- 首次加载等待 ---
+  if (!dataReady) {
+    return (
+      <div className="min-h-screen bg-gray-100 flex items-center justify-center">
+        <div className="text-center text-gray-500">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <p>加载中...</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-gray-100 text-gray-800 font-sans pb-10">
-      {/* 顶部导航与角色切换 */}
+      {/* 顶部导航 */}
       <header className="bg-blue-600 text-white p-4 shadow-md flex justify-between items-center sticky top-0 z-10">
         <h1 className="text-xl font-bold flex items-center truncate">
           <ShieldCheck className="mr-2 flex-shrink-0"/> 
@@ -244,7 +294,7 @@ export default function App() {
 
       <main className="max-w-md mx-auto mt-4 p-4">
         
-        {/* --- 登录界面 --- */}
+        {/* 登录界面 */}
         {role === 'login' && (
           <div className="bg-white p-6 rounded-lg shadow-md mt-10 border-t-4 border-blue-600">
             <div className="text-center mb-6">
@@ -274,7 +324,7 @@ export default function App() {
           </div>
         )}
 
-        {/* --- 系统主界面 (登录后或老师端) --- */}
+        {/* 主界面 */}
         {role !== 'login' && (
           <>
             {/* 导航标签 */}
@@ -292,7 +342,7 @@ export default function App() {
               </button>
             </div>
 
-            {/* 标签页 1: 提交表单 (老师端) */}
+            {/* 标签页 1: 提交表单 */}
             {activeTab === 'submit' && role === 'teacher' && (
               <div className="bg-white p-6 rounded-lg shadow-md">
                 <div className="mb-4 flex items-center justify-between border-b pb-4">
@@ -365,8 +415,12 @@ export default function App() {
                   {errorMsg && <div className="p-3 bg-red-50 text-red-700 border border-red-200 rounded-lg text-sm flex items-start"><AlertTriangle className="mr-2 flex-shrink-0 mt-0.5" size={16} /> {errorMsg}</div>}
                   {successMsg && <div className="p-3 bg-green-50 text-green-700 border border-green-200 rounded-lg text-sm flex items-start"><CheckCircle className="mr-2 flex-shrink-0 mt-0.5" size={16} /> {successMsg}</div>}
 
-                  <button type="submit" className="w-full bg-blue-600 text-white font-bold py-3 rounded-lg hover:bg-blue-700 transition shadow-lg mt-4">
-                    提交好评审核
+                  <button 
+                    type="submit" 
+                    disabled={submitting}
+                    className={`w-full text-white font-bold py-3 rounded-lg transition shadow-lg mt-4 ${submitting ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'}`}
+                  >
+                    {submitting ? '上传中...' : '提交好评审核'}
                   </button>
                 </form>
               </div>
@@ -375,7 +429,7 @@ export default function App() {
             {/* 标签页 2: 记录/审核列表 */}
             {activeTab === 'list' && (
               <div className="space-y-4">
-                {/* 店长端：老师管理入口 */}
+                {/* 店长端：老师管理 */}
                 {role === 'admin' && (
                   <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-100">
                     <button
@@ -391,7 +445,6 @@ export default function App() {
                     
                     {showTeacherMgmt && (
                       <div className="mt-3 pt-3 border-t border-gray-100">
-                        {/* 当前老师列表 */}
                         <div className="flex flex-wrap gap-2 mb-3">
                           {teachers.map(t => (
                             <span key={t} className="inline-flex items-center px-3 py-1 bg-blue-50 text-blue-700 rounded-full text-sm">
@@ -406,7 +459,6 @@ export default function App() {
                             </span>
                           ))}
                         </div>
-                        {/* 添加老师 */}
                         <div className="flex space-x-2">
                           <input
                             type="text"
@@ -428,6 +480,8 @@ export default function App() {
                     )}
                   </div>
                 )}
+
+                {/* 好评列表 */}
                 {reviews.filter(r => role === 'admin' ? true : r.teacher === currentTeacher).map(review => (
                   <div key={review.id} className="bg-white p-4 rounded-lg shadow-sm border border-gray-100 flex flex-col">
                     <div className="flex justify-between items-start mb-3">
@@ -441,14 +495,10 @@ export default function App() {
                     </div>
                     
                     <div className="flex gap-3 mb-2">
-                       {/* 显示上传的图片 */}
+                       {/* 图片：Firebase URL 直接显示 */}
                        {review.imageUrl && (
                          <div className="w-20 h-20 flex-shrink-0 bg-gray-100 rounded overflow-hidden border">
-                           {review.imageUrl.startsWith('data:image') ? (
-                             <img src={review.imageUrl} alt="好评截图" className="w-full h-full object-cover" />
-                           ) : (
-                             <div className="w-full h-full flex items-center justify-center text-xs text-gray-400">无图</div>
-                           )}
+                           <img src={review.imageUrl} alt="好评截图" className="w-full h-full object-cover" />
                          </div>
                        )}
                        <div className="flex-1 text-sm text-gray-700 bg-blue-50 p-2 rounded border border-blue-100">
@@ -510,7 +560,6 @@ export default function App() {
                       </div>
                       
                       <div className="space-y-3 text-sm">
-                        {/* 周结展示 */}
                         <div className="flex justify-between items-center p-3 rounded-lg border border-gray-100">
                           <span className="font-semibold text-gray-700">周考核 (10-20条)</span>
                           {stats.weeklyPenalty > 0 && <span className="text-red-600 font-bold bg-red-50 px-2 py-1 rounded">罚 ¥{stats.weeklyPenalty} (差 {10 - stats.validCount}条)</span>}
@@ -518,7 +567,6 @@ export default function App() {
                           {stats.weeklyPenalty === 0 && stats.weeklyBonus === 0 && <span className="text-gray-500 bg-gray-100 px-2 py-1 rounded">达标区</span>}
                         </div>
 
-                        {/* 月结展示 */}
                         <div className="flex justify-between items-center p-3 rounded-lg border border-gray-100">
                           <span className="font-semibold text-gray-700">月考核 (60-90条)</span>
                           {stats.monthlyPenalty > 0 && <span className="text-red-600 font-bold bg-red-50 px-2 py-1 rounded">罚 ¥{stats.monthlyPenalty} (差 {60 - stats.validCount}条)</span>}
