@@ -1,11 +1,22 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { CheckCircle, XCircle, Clock, AlertTriangle, User, ShieldCheck, Calculator, Image as ImageIcon, Lock, LogOut } from 'lucide-react';
 
-// 初始模拟数据
+// 初始模拟数据（仅首次使用，之后从 localStorage 读取）
 const initialReviews = [
   { id: 1, teacher: '王老师', orderNo: 'MT12345678', date: '2026-05-10', status: 'approved', imageUrl: '' },
   { id: 2, teacher: '李老师', orderNo: 'MT87654321', date: '2026-05-12', status: 'pending', imageUrl: '' },
 ];
+const defaultTeachers = ['王老师', '李老师', '张老师'];
+
+// 从 localStorage 读取数据，没有则用默认值
+const loadFromStorage = (key, fallback) => {
+  try {
+    const saved = localStorage.getItem(key);
+    return saved ? JSON.parse(saved) : fallback;
+  } catch {
+    return fallback;
+  }
+};
 
 export default function App() {
   const [role, setRole] = useState('teacher'); // 'teacher' or 'admin'
@@ -13,8 +24,12 @@ export default function App() {
   const [adminPasswordInput, setAdminPasswordInput] = useState('');
   const [authError, setAuthError] = useState('');
 
-  const [currentTeacher, setCurrentTeacher] = useState('王老师');
-  const [reviews, setReviews] = useState(initialReviews);
+  const [teachers, setTeachers] = useState(() => loadFromStorage('haoping_teachers', defaultTeachers));
+  const [currentTeacher, setCurrentTeacher] = useState(() => {
+    const saved = loadFromStorage('haoping_teachers', defaultTeachers);
+    return saved[0] || '王老师';
+  });
+  const [reviews, setReviews] = useState(() => loadFromStorage('haoping_reviews', initialReviews));
   const [activeTab, setActiveTab] = useState('submit'); // 'submit', 'list', 'stats'
 
   // 表单状态
@@ -25,7 +40,19 @@ export default function App() {
   
   // 图片上传状态
   const [previewImage, setPreviewImage] = useState(null);
+  
+  // 老师管理状态
+  const [showTeacherMgmt, setShowTeacherMgmt] = useState(false);
+  const [newTeacherName, setNewTeacherName] = useState('');
 
+
+  // --- 数据持久化：state 变更时自动同步到 localStorage ---
+  useEffect(() => {
+    localStorage.setItem('haoping_reviews', JSON.stringify(reviews));
+  }, [reviews]);
+  useEffect(() => {
+    localStorage.setItem('haoping_teachers', JSON.stringify(teachers));
+  }, [teachers]);
 
   const ADMIN_PASSWORD = 'sgyyzhou'; // 设置店长密码
 
@@ -134,6 +161,27 @@ export default function App() {
     ));
   };
 
+  // --- 老师管理逻辑 ---
+  const handleAddTeacher = () => {
+    const name = newTeacherName.trim();
+    if (!name) return;
+    if (teachers.includes(name)) {
+      alert('该老师已存在！');
+      return;
+    }
+    setTeachers([...teachers, name]);
+    setNewTeacherName('');
+  };
+
+  const handleRemoveTeacher = (name) => {
+    if (!window.confirm(`确定要删除「${name}」吗？（该老师的好评记录不会删除）`)) return;
+    const newTeachers = teachers.filter(t => t !== name);
+    setTeachers(newTeachers);
+    if (currentTeacher === name) {
+      setCurrentTeacher(newTeachers[0] || '');
+    }
+  };
+
   // --- 奖惩计算核心逻辑 ---
   const calculateStats = (teacherName) => {
     const validCount = reviews.filter(r => r.teacher === teacherName && r.status === 'approved').length;
@@ -158,8 +206,6 @@ export default function App() {
 
     return { validCount, weeklyPenalty, weeklyBonus, monthlyPenalty, monthlyBonus };
   };
-
-  const teachers = ['王老师', '李老师', '张老师'];
 
   return (
     <div className="min-h-screen bg-gray-100 text-gray-800 font-sans pb-10">
@@ -329,6 +375,59 @@ export default function App() {
             {/* 标签页 2: 记录/审核列表 */}
             {activeTab === 'list' && (
               <div className="space-y-4">
+                {/* 店长端：老师管理入口 */}
+                {role === 'admin' && (
+                  <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-100">
+                    <button
+                      onClick={() => setShowTeacherMgmt(!showTeacherMgmt)}
+                      className="w-full text-left flex items-center justify-between text-sm font-medium text-gray-700"
+                    >
+                      <div className="flex items-center">
+                        <User className="mr-2 text-blue-500" size={18} />
+                        <span>管理老师 ({teachers.length}位)</span>
+                      </div>
+                      <span className="text-gray-400">{showTeacherMgmt ? '收起 ▲' : '展开 ▼'}</span>
+                    </button>
+                    
+                    {showTeacherMgmt && (
+                      <div className="mt-3 pt-3 border-t border-gray-100">
+                        {/* 当前老师列表 */}
+                        <div className="flex flex-wrap gap-2 mb-3">
+                          {teachers.map(t => (
+                            <span key={t} className="inline-flex items-center px-3 py-1 bg-blue-50 text-blue-700 rounded-full text-sm">
+                              {t}
+                              {teachers.length > 1 && (
+                                <button
+                                  onClick={() => handleRemoveTeacher(t)}
+                                  className="ml-2 text-red-400 hover:text-red-600"
+                                  title="删除"
+                                >×</button>
+                              )}
+                            </span>
+                          ))}
+                        </div>
+                        {/* 添加老师 */}
+                        <div className="flex space-x-2">
+                          <input
+                            type="text"
+                            value={newTeacherName}
+                            onChange={(e) => setNewTeacherName(e.target.value)}
+                            onKeyDown={(e) => e.key === 'Enter' && handleAddTeacher()}
+                            placeholder="输入新老师姓名（如：赵老师）"
+                            className="flex-1 p-2 border rounded text-sm bg-gray-50 focus:ring-2 focus:ring-blue-500"
+                          />
+                          <button
+                            type="button"
+                            onClick={handleAddTeacher}
+                            className="px-4 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-700 whitespace-nowrap"
+                          >
+                            ＋ 添加
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
                 {reviews.filter(r => role === 'admin' ? true : r.teacher === currentTeacher).map(review => (
                   <div key={review.id} className="bg-white p-4 rounded-lg shadow-sm border border-gray-100 flex flex-col">
                     <div className="flex justify-between items-start mb-3">
