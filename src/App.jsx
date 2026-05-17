@@ -241,27 +241,63 @@ export default function App() {
     }
   };
 
-  // --- 奖惩计算 ---
+  // --- 日期辅助函数 ---
+  const getWeekRange = () => {
+    const now = new Date();
+    const day = now.getDay(); // 0=周日, 1=周一...
+    const diff = day === 0 ? -6 : 1 - day; // 回到本周一
+    const monday = new Date(now);
+    monday.setDate(now.getDate() + diff);
+    monday.setHours(0, 0, 0, 0);
+    const sunday = new Date(monday);
+    sunday.setDate(monday.getDate() + 6);
+    sunday.setHours(23, 59, 59, 999);
+    return { start: monday, end: sunday };
+  };
+  const getMonthRange = () => {
+    const now = new Date();
+    const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
+    firstDay.setHours(0, 0, 0, 0);
+    const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    lastDay.setHours(23, 59, 59, 999);
+    return { start: firstDay, end: lastDay };
+  };
+
+  // --- 奖惩计算（按自然周/自然月） ---
   const calculateStats = (teacherName) => {
-    const validCount = reviews.filter(r => r.teacher === teacherName && r.status === 'approved').length;
-    
+    const teacherReviews = reviews.filter(r => r.teacher === teacherName && r.status === 'approved');
+    const totalCount = teacherReviews.length;
+
+    const weekRange = getWeekRange();
+    const monthRange = getMonthRange();
+
+    const weekCount = teacherReviews.filter(r => {
+      const d = new Date(r.date + 'T00:00:00');
+      return d >= weekRange.start && d <= weekRange.end;
+    }).length;
+
+    const monthCount = teacherReviews.filter(r => {
+      const d = new Date(r.date + 'T00:00:00');
+      return d >= monthRange.start && d <= monthRange.end;
+    }).length;
+
     let weeklyPenalty = 0;
     let weeklyBonus = 0;
-    if (validCount < 10) {
-      weeklyPenalty = (10 - validCount) * 5;
-    } else if (validCount > 20) {
-      weeklyBonus = (validCount - 20) * 5;
+    if (weekCount < 10) {
+      weeklyPenalty = (10 - weekCount) * 5;
+    } else if (weekCount > 20) {
+      weeklyBonus = (weekCount - 20) * 5;
     }
 
     let monthlyPenalty = 0;
     let monthlyBonus = 0;
-    if (validCount < 60) {
-      monthlyPenalty = (60 - validCount) * 5;
-    } else if (validCount > 90) {
-      monthlyBonus = (validCount - 90) * 5;
+    if (monthCount < 60) {
+      monthlyPenalty = (60 - monthCount) * 5;
+    } else if (monthCount > 90) {
+      monthlyBonus = (monthCount - 90) * 5;
     }
 
-    return { validCount, weeklyPenalty, weeklyBonus, monthlyPenalty, monthlyBonus };
+    return { totalCount, weekCount, monthCount, weeklyPenalty, weeklyBonus, monthlyPenalty, monthlyBonus };
   };
 
   // --- 首次加载等待 ---
@@ -571,25 +607,31 @@ export default function App() {
                         {teacher}
                       </h3>
                       
-                      <div className="bg-gray-50 p-4 rounded-lg mb-4 text-center">
-                        <p className="text-sm text-gray-500 font-medium mb-1">当前有效好评总数</p>
-                        <p className="text-4xl font-black text-gray-800 tracking-tight">
-                          {stats.validCount} <span className="text-base font-normal text-gray-500">条</span>
-                        </p>
+                      <div className="bg-gray-50 p-4 rounded-lg mb-4">
+                        <div className="text-center mb-3">
+                          <p className="text-sm text-gray-500 font-medium mb-1">累计有效好评</p>
+                          <p className="text-4xl font-black text-gray-800 tracking-tight">
+                            {stats.totalCount} <span className="text-base font-normal text-gray-500">条</span>
+                          </p>
+                        </div>
+                        <div className="flex justify-around text-xs text-gray-500 border-t pt-2">
+                          <span>本周已通过: <strong>{stats.weekCount}</strong> 条</span>
+                          <span>本月已通过: <strong>{stats.monthCount}</strong> 条</span>
+                        </div>
                       </div>
                       
                       <div className="space-y-3 text-sm">
                         <div className="flex justify-between items-center p-3 rounded-lg border border-gray-100">
                           <span className="font-semibold text-gray-700">周考核 (10-20条)</span>
-                          {stats.weeklyPenalty > 0 && <span className="text-red-600 font-bold bg-red-50 px-2 py-1 rounded">罚 ¥{stats.weeklyPenalty} (差 {10 - stats.validCount}条)</span>}
-                          {stats.weeklyBonus > 0 && <span className="text-green-600 font-bold bg-green-50 px-2 py-1 rounded">奖 ¥{stats.weeklyBonus} (超 {stats.validCount - 20}条)</span>}
+                          {stats.weeklyPenalty > 0 && <span className="text-red-600 font-bold bg-red-50 px-2 py-1 rounded">罚 ¥{stats.weeklyPenalty} (差 {10 - stats.weekCount}条)</span>}
+                          {stats.weeklyBonus > 0 && <span className="text-green-600 font-bold bg-green-50 px-2 py-1 rounded">奖 ¥{stats.weeklyBonus} (超 {stats.weekCount - 20}条)</span>}
                           {stats.weeklyPenalty === 0 && stats.weeklyBonus === 0 && <span className="text-gray-500 bg-gray-100 px-2 py-1 rounded">达标区</span>}
                         </div>
 
                         <div className="flex justify-between items-center p-3 rounded-lg border border-gray-100">
                           <span className="font-semibold text-gray-700">月考核 (60-90条)</span>
-                          {stats.monthlyPenalty > 0 && <span className="text-red-600 font-bold bg-red-50 px-2 py-1 rounded">罚 ¥{stats.monthlyPenalty} (差 {60 - stats.validCount}条)</span>}
-                          {stats.monthlyBonus > 0 && <span className="text-green-600 font-bold bg-green-50 px-2 py-1 rounded">奖 ¥{stats.monthlyBonus} (超 {stats.validCount - 90}条)</span>}
+                          {stats.monthlyPenalty > 0 && <span className="text-red-600 font-bold bg-red-50 px-2 py-1 rounded">罚 ¥{stats.monthlyPenalty} (差 {60 - stats.monthCount}条)</span>}
+                          {stats.monthlyBonus > 0 && <span className="text-green-600 font-bold bg-green-50 px-2 py-1 rounded">奖 ¥{stats.monthlyBonus} (超 {stats.monthCount - 90}条)</span>}
                           {stats.monthlyPenalty === 0 && stats.monthlyBonus === 0 && <span className="text-gray-500 bg-gray-100 px-2 py-1 rounded">达标区</span>}
                         </div>
                       </div>
